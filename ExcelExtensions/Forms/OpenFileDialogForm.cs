@@ -29,7 +29,8 @@ public partial class OpenFileDialogForm : Form
 		_openFileDialog = new OpenFileDialog
 		{
 			FileName = "Selecione um arquivo Excel",
-			Filter = "Arquivos Excel (*.xlsx)|*.xlsx" 
+			Filter = "Arquivos Excel (*.xlsx)|*.xlsx",
+			Multiselect = true
 		};
 
 
@@ -38,6 +39,8 @@ public partial class OpenFileDialogForm : Form
 			try
 			{
 				var fileName = _openFileDialog.FileName;
+
+				var newFilePath = string.Empty;
 
 				using (var fStream = new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
 				{
@@ -53,33 +56,16 @@ public partial class OpenFileDialogForm : Form
 						var cells = sheet.Descendants<Cell>();
 						var rows = sheet.Descendants<Row>();
 
-						Console.WriteLine("Row count = {0}", rows.LongCount());
-						Console.WriteLine("Cell count = {0}", cells.LongCount());
-
-						// One way: go through each cell in the sheet
-						//foreach (Cell cell in cells)
-						//{
-						//	if ((cell.DataType != null) && (cell.DataType == CellValues.SharedString))
-						//	{
-						//		int ssid = int.Parse(cell.CellValue.Text);
-						//		string str = sst.ChildElements[ssid].InnerText;
-						//		Console.WriteLine("Shared string {0}: {1}", ssid, str);
-						//	}
-						//	else if (cell.CellValue != null)
-						//	{
-						//		Console.WriteLine("Cell contents: {0}", cell.CellValue.Text);
-						//	}
-						//}
-						
 						var directory = Path.GetDirectoryName(fileName);
 
 						var csvFilePath = Path.Combine(directory, $"{Path.GetFileNameWithoutExtension(fileName)}.csv");
+
+						newFilePath = csvFilePath.ToString();
 
 						using var file = File.OpenWrite(csvFilePath);
 
 						using var streamWriter = new StreamWriter(file);
 
-						// Or... via each row
 						foreach (Row row in rows)
 						{
 							var line = string.Empty;
@@ -113,33 +99,70 @@ public partial class OpenFileDialogForm : Form
 								}
 							}
 
-							//foreach (Cell c in cellElements)
-							//{
-							//	if ((c.DataType != null) && (c.DataType == CellValues.SharedString))
-							//	{
-							//		int ssid = int.Parse(c.CellValue.Text);
-							//		string str = sst.ChildElements[ssid].InnerText;
-							//		Console.WriteLine("Shared string {0}: {1}", ssid, str);
-							//		line += $"{str},";
-							//	}
-							//	else if (c.CellValue != null)
-							//	{
-							//		Console.WriteLine("Cell contents: {0}", c.CellValue.Text);
-							//	}
-							//}
-
 							streamWriter.WriteLine(line);
 							streamWriter.WriteLine();
 						}
 					}
 				}
 
+				var newCsvDirectory = Path.GetDirectoryName(newFilePath);
+
+				var xlsxFilePath = Path.Combine(newCsvDirectory, $"{Path.GetFileNameWithoutExtension(fileName)} - COM LINHAS.xlsx");
+
+				using (SpreadsheetDocument document = SpreadsheetDocument.Create(xlsxFilePath, DocumentFormat.OpenXml.SpreadsheetDocumentType.Workbook))
+				{
+					WorkbookPart workbookPart = document.AddWorkbookPart();
+					workbookPart.Workbook = new Workbook();
+
+					WorksheetPart worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+					SheetData sheetData = new SheetData();
+
+					worksheetPart.Worksheet = new Worksheet(sheetData);
+					Sheets sheets = document.WorkbookPart.Workbook.AppendChild(new Sheets());
+					Sheet sheet = new Sheet()
+					{
+						Id = document.WorkbookPart.GetIdOfPart(worksheetPart),
+						SheetId = 1,
+						Name = "Sheet1"
+					};
+					sheets.Append(sheet);
+
+					uint rowIndex = 1;
+					foreach (var line in File.ReadLines(newFilePath))
+					{
+						// Add an empty row if the line is blank
+						if (string.IsNullOrWhiteSpace(line))
+						{
+							sheetData.Append(new Row() { RowIndex = rowIndex++ });
+							continue;
+						}
+
+						Row row = new Row() { RowIndex = rowIndex++ };
+						string[] values = line.Split(',');
+
+						foreach (var value in values)
+						{
+							Cell cell = new Cell()
+							{
+								DataType = CellValues.String,
+								CellValue = new CellValue(value)
+							};
+							row.Append(cell);
+						}
+
+						sheetData.Append(row);
+					}
+
+					workbookPart.Workbook.Save();
+				}
+
+				File.Delete(newFilePath);
+
 				MessageBox.Show($"Arquivo gravado com sucesso");
 			}
-			catch (SecurityException ex)
+			catch (Exception ex)
 			{
-				MessageBox.Show($"Security error.\n\nError message: {ex.Message}\n\n" +
-				$"Details:\n\n{ex.StackTrace}");
+				MessageBox.Show($"Houve um erro: {ex.Message}", "Erro");
 			}
 		}
 	}
